@@ -1,0 +1,59 @@
+name: nifty-alert
+
+on:
+  schedule:
+    - cron: "35 3 * * 1-5"   # 09:05 IST
+    - cron: "50 6 * * 1-5"   # 12:20 IST
+  workflow_dispatch:
+
+jobs:
+  test:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python nifty_alert.py
+        env:
+          TEST: "1"
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+
+  morning:
+    if: github.event.schedule == '35 3 * * 1-5'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python nifty_alert.py
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          WINDOW_START: "09:15"
+          WINDOW_END: "12:30"
+          RUN_UNTIL: "12:35"
+
+  afternoon:
+    if: github.event.schedule == '50 6 * * 1-5'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python nifty_alert.py
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          WINDOW_START: "12:30"
+          WINDOW_END: "15:30"
+          RUN_UNTIL: "15:33"
