@@ -15,10 +15,13 @@ def hm(s):
 W_START   = hm(os.environ.get("WINDOW_START", "09:15"))
 W_END     = hm(os.environ.get("WINDOW_END", "15:30"))
 RUN_UNTIL = hm(os.environ.get("RUN_UNTIL", "15:33"))
+HB_MIN    = 30   # alive message kitne minute me ek baar
 
 ST_LEN, ST_MULT = 10, 1.5
 BB_LEN, BB_MULT = 20, 2.0
 RSI_LEN, CALL_RSI, PUT_RSI = 14, 70, 40
+
+STATE = {1: "IN CALL", -1: "IN PUT", 0: "Flat (koi position nahi)"}
 
 
 def tg(msg):
@@ -107,37 +110,68 @@ def compute(c):
         if ev:
             last_event = (ts, ev, r)
         last_ts = ts
-    if last_event and last_event[0] == last_ts:
-        return last_event
-    return None
+    event_now = last_event if (last_event and last_event[0] == last_ts) else None
+    return event_now, c.iloc[-1], pos, last_ts
 
 
 if os.environ.get("TEST") == "1":
     tg("✅ Test: GitHub Actions se Telegram alert chal raha hai")
     sys.exit()
 
-sent_ts, errors = None, 0
-print("Started", datetime.now(IST), W_START, W_END, RUN_UNTIL, flush=True)
+sent_ts, errors, last_hb, stale_warned = None, 0, None, False
+tg(f"🟢 Bot chalu ho gaya ({datetime.now(IST):%H:%M} IST)\n"
+   f"Monitoring: {W_START:%H:%M} se {W_END:%H:%M}\n"
+   f"Har {HB_MIN} min me 💓 Alive message aayega.")
+
 while True:
     now = datetime.now(IST)
     if now.time() > RUN_UNTIL:
         break
     if now.weekday() < 5 and dtime(9, 15) <= now.time() <= dtime(15, 35):
         try:
-            res = compute(get_data())
+            ev, r, pos, last_ts = compute(get_data())
             errors = 0
-            if res:
-                ts, ev, r = res
-                end = ts + pd.Timedelta(minutes=3)
-                fresh = (now - end) <= pd.Timedelta(minutes=5)
-                in_window = W_START < end.time() <= W_END
-                if fresh and in_window and ts != sent_ts:
-                    tg(f"{ev}\nNifty: {r.Close:.2f}\nRSI: {r.RSI:.1f}\n"
-                       f"SuperTrend: {r.ST:.2f}\nCandle: {ts:%H:%M}")
-                    sent_ts = ts
+
+            # data purana to nahi?
+            age = now - (last_ts + pd.Timedelta(minutes=3))
+            if age > pd.Timedelta(minutes=10):
+                if not stale_warned:
+                    tg(f"⚠️ Data purana hai (last candle {last_ts:%H:%M}). "
+                       f"Yahoo se data nahi aa raha, ya aaj market holiday hai. Chart khud dekho.")
+                    stale_warned = True
+            else:
+                stale_warned = False
+
+                # CALL / PUT / EXIT alert
+                if ev:
+                    ts, name, rr = ev
+                    end = ts + pd.Timedelta(minutes=3)
+                    fresh = (now - end) <= pd.Timedelta(minutes=5)
+                    in_window = W_START < end.time() <= W_END
+                    if fresh and in_window and ts != sent_ts:
+                        tg(f"{name}\nNifty: {rr.Close:.2f}\nRSI: {rr.RSI:.1f}\n"
+                           f"SuperTrend: {rr.ST:.2f}\nCandle: {ts:%H:%M}")
+                        sent_ts = ts
+
+                # 💓 alive message
+                if W_START <= now.time() <= W_END and (
+                        last_hb is None or now - last_hb >= pd.Timedelta(minutes=HB_MIN)):
+                    call_ok = sum([r.Close > r.ST, r.RSI > CALL_RSI,
+                                   r.Close > r.BBU, r.Close > r.R1])
+                    put_ok = sum([r.Close < r.ST, r.RSI < PUT_RSI,
+                                  r.Close < r.BBL, r.Close < r.S1])
+                    tg(f"💓 Alive {now:%H:%M}\nNifty: {r.Close:.2f} | RSI: {r.RSI:.1f}\n"
+                       f"CALL conditions: {call_ok}/4 | PUT conditions: {put_ok}/4\n"
+                       f"Position: {STATE[pos]}\nSignal abhi nahi bana.")
+                    last_hb = now
         except Exception as e:
             errors += 1
             print("Error:", e, flush=True)
             if errors == 15:
-                tg("⚠️ Data fetch me baar baar error aa raha hai (yfinance)")
+                tg("⚠️ Data fetch me baar baar error aa raha hai (yfinance). Chart khud dekho.")
     time.sleep(20)
+
+if W_END >= dtime(15, 30):
+    tg("🔴 Market close. Aaj ka session khatam, bot band ho raha hai.")
+else:
+    tg("🔴 Morning session khatam. Afternoon job ab sambhal lega.")
