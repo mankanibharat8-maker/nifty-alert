@@ -6,6 +6,16 @@ TOKEN   = os.environ["TG_TOKEN"]
 CHAT_ID = os.environ["TG_CHAT_ID"]
 IST = ZoneInfo("Asia/Kolkata")
 
+HC_URL = os.environ.get("HC_URL")
+
+
+def ping():
+    if HC_URL:
+        try:
+            requests.get(HC_URL, timeout=10)
+        except Exception as e:
+            print("HC ping error:", e)
+
 
 def hm(s):
     h, m = map(int, s.split(":"))
@@ -118,7 +128,7 @@ if os.environ.get("TEST") == "1":
     tg("✅ Test: GitHub Actions se Telegram alert chal raha hai")
     sys.exit()
 
-sent_ts, errors, last_hb, stale_warned = None, 0, None, False
+sent_ts, errors, last_hb, stale_warned, last_ping = None, 0, None, False, None
 tg(f"🟢 Bot chalu ho gaya ({datetime.now(IST):%H:%M} IST)\n"
    f"Monitoring: {W_START:%H:%M} se {W_END:%H:%M}\n"
    f"Har {HB_MIN} min me 💓 Alive message aayega.")
@@ -127,6 +137,12 @@ while True:
     now = datetime.now(IST)
     if now.time() > RUN_UNTIL:
         break
+
+    # healthchecks.io ko "main zinda hoon" signal (har 5 min)
+    if last_ping is None or (now - last_ping).total_seconds() >= 300:
+        ping()
+        last_ping = now
+
     if now.weekday() < 5 and dtime(9, 15) <= now.time() <= dtime(15, 35):
         try:
             ev, r, pos, last_ts = compute(get_data())
