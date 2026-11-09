@@ -1,14 +1,15 @@
 name: nifty-alert
 
 on:
-  schedule:
-    - cron: "35 3 * * 1-5"   # 09:05 IST
-    - cron: "50 6 * * 1-5"   # 12:20 IST
   workflow_dispatch:
+    inputs:
+      session:
+        description: "test / morning / afternoon"
+        default: "test"
 
 jobs:
   test:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event.inputs.session == 'test'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,7 +24,7 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
 
   morning:
-    if: github.event.schedule == '35 3 * * 1-5'
+    if: github.event.inputs.session == 'morning'
     runs-on: ubuntu-latest
     timeout-minutes: 240
     steps:
@@ -36,6 +37,7 @@ jobs:
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          HC_URL: ${{ secrets.HC_URL }}
           WINDOW_START: "09:15"
           WINDOW_END: "12:30"
           RUN_UNTIL: "12:35"
@@ -50,7 +52,7 @@ jobs:
             -d text="⚠️ Morning job fail ho gaya. GitHub Actions tab check karo, chart khud dekho."
 
   afternoon:
-    if: github.event.schedule == '50 6 * * 1-5'
+    if: github.event.inputs.session == 'afternoon'
     runs-on: ubuntu-latest
     timeout-minutes: 240
     steps:
@@ -63,6 +65,7 @@ jobs:
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          HC_URL: ${{ secrets.HC_URL }}
           WINDOW_START: "12:30"
           WINDOW_END: "15:30"
           RUN_UNTIL: "15:33"
