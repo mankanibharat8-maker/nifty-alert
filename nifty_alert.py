@@ -27,7 +27,9 @@ W_END     = hm(os.environ.get("WINDOW_END", "15:30"))
 RUN_UNTIL = hm(os.environ.get("RUN_UNTIL", "15:33"))
 HB_MIN    = 30   # alive message kitne minute me ek baar
 
-ST_LEN, ST_MULT = 10, 1.5
+# ---- SIGNAL SETTINGS ----
+CALL_ST_LEN, CALL_ST_MULT = 20, 2.0    # CALL ke liye SuperTrend (20, 2)
+PUT_ST_LEN,  PUT_ST_MULT  = 10, 1.5    # PUT ke liye SuperTrend (10, 1.5)
 BB_LEN, BB_MULT = 20, 2.0
 RSI_LEN, CALL_RSI, PUT_RSI = 14, 70, 40
 
@@ -70,7 +72,7 @@ def get_data():
     return c
 
 
-def supertrend(c):
+def supertrend(c, ST_LEN, ST_MULT):
     hl2 = (c.High + c.Low) / 2
     tr = pd.concat([c.High - c.Low,
                     (c.High - c.Close.shift()).abs(),
@@ -96,7 +98,8 @@ def supertrend(c):
 
 def compute(c):
     c = c.copy()
-    c["ST"] = supertrend(c)
+    c["ST_CALL"] = supertrend(c, CALL_ST_LEN, CALL_ST_MULT)
+    c["ST_PUT"]  = supertrend(c, PUT_ST_LEN, PUT_ST_MULT)
     delta = c.Close.diff()
     rs = rma(delta.clip(lower=0), RSI_LEN) / rma((-delta).clip(lower=0), RSI_LEN)
     c["RSI"] = 100 - 100 / (1 + rs)
@@ -106,16 +109,16 @@ def compute(c):
 
     pos, last_event, last_ts = 0, None, None
     for ts, r in c.iterrows():
-        callAll = r.Close > r.ST and r.RSI > CALL_RSI and r.Close > r.BBU and r.Close > r.R1
-        putAll  = r.Close < r.ST and r.RSI < PUT_RSI  and r.Close < r.BBL and r.Close < r.S1
+        callAll = r.Close > r.ST_CALL and r.RSI > CALL_RSI and r.Close > r.BBU and r.Close > r.R1
+        putAll  = r.Close < r.ST_PUT  and r.RSI < PUT_RSI  and r.Close < r.BBL and r.Close < r.S1
         ev = None
         if pos == 0 and callAll:
             pos, ev = 1, "🟢 CALL BUY"
         elif pos == 0 and putAll:
             pos, ev = -1, "🔴 PUT BUY"
-        elif pos == 1 and r.Close < r.ST:
+        elif pos == 1 and r.Close < r.ST_CALL:
             pos, ev = 0, "🟠 CALL EXIT"
-        elif pos == -1 and r.Close > r.ST:
+        elif pos == -1 and r.Close > r.ST_PUT:
             pos, ev = 0, "🟠 PUT EXIT"
         if ev:
             last_event = (ts, ev, r)
@@ -165,16 +168,17 @@ while True:
                     fresh = (now - end) <= pd.Timedelta(minutes=5)
                     in_window = W_START < end.time() <= W_END
                     if fresh and in_window and ts != sent_ts:
+                        st_val = rr.ST_CALL if "CALL" in name else rr.ST_PUT
                         tg(f"{name}\nNifty: {rr.Close:.2f}\nRSI: {rr.RSI:.1f}\n"
-                           f"SuperTrend: {rr.ST:.2f}\nCandle: {ts:%H:%M}")
+                           f"SuperTrend: {st_val:.2f}\nCandle: {ts:%H:%M}")
                         sent_ts = ts
 
                 # 💓 alive message
                 if W_START <= now.time() <= W_END and (
                         last_hb is None or now - last_hb >= pd.Timedelta(minutes=HB_MIN)):
-                    call_ok = sum([r.Close > r.ST, r.RSI > CALL_RSI,
+                    call_ok = sum([r.Close > r.ST_CALL, r.RSI > CALL_RSI,
                                    r.Close > r.BBU, r.Close > r.R1])
-                    put_ok = sum([r.Close < r.ST, r.RSI < PUT_RSI,
+                    put_ok = sum([r.Close < r.ST_PUT, r.RSI < PUT_RSI,
                                   r.Close < r.BBL, r.Close < r.S1])
                     tg(f"💓 Alive {now:%H:%M}\nNifty: {r.Close:.2f} | RSI: {r.RSI:.1f}\n"
                        f"CALL conditions: {call_ok}/4 | PUT conditions: {put_ok}/4\n"
