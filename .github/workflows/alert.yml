@@ -1,15 +1,20 @@
 name: nifty-alert
 
 on:
+  schedule:
+    # GitHub cron UTC me hota hai (IST = UTC + 5:30). Mon-Fri.
+    - cron: "40 3 * * 1-5"    # 09:10 IST  -> morning
+    - cron: "55 5 * * 1-5"    # 11:25 IST  -> midday
+    - cron: "55 7 * * 1-5"    # 13:25 IST  -> afternoon
   workflow_dispatch:
     inputs:
       session:
-        description: "test / morning / afternoon"
+        description: "test / morning / midday / afternoon"
         default: "test"
 
 jobs:
   test:
-    if: github.event.inputs.session == 'test'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'test'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,9 +29,9 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
 
   morning:
-    if: github.event.inputs.session == 'morning'
+    if: (github.event_name == 'schedule' && github.event.schedule == '40 3 * * 1-5') || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'morning')
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 160
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -39,8 +44,8 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           HC_URL: ${{ secrets.HC_URL }}
           WINDOW_START: "09:15"
-          WINDOW_END: "12:30"
-          RUN_UNTIL: "12:35"
+          WINDOW_END: "11:30"
+          RUN_UNTIL: "11:33"
       - name: Notify on failure
         if: failure()
         env:
@@ -49,12 +54,12 @@ jobs:
         run: |
           curl -s "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
             -d chat_id="${TG_CHAT_ID}" \
-            -d text="⚠️ Morning job fail ho gaya. GitHub Actions tab check karo, chart khud dekho."
+            -d text="⚠️ Morning job fail ho gaya. Agla job miss hue signals pakad lega. Chart khud bhi dekho."
 
-  afternoon:
-    if: github.event.inputs.session == 'afternoon'
+  midday:
+    if: (github.event_name == 'schedule' && github.event.schedule == '55 5 * * 1-5') || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'midday')
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -66,7 +71,35 @@ jobs:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           HC_URL: ${{ secrets.HC_URL }}
-          WINDOW_START: "12:30"
+          WINDOW_START: "11:30"
+          WINDOW_END: "13:30"
+          RUN_UNTIL: "13:33"
+      - name: Notify on failure
+        if: failure()
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          curl -s "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+            -d chat_id="${TG_CHAT_ID}" \
+            -d text="⚠️ Midday job fail ho gaya. Agla job miss hue signals pakad lega. Chart khud bhi dekho."
+
+  afternoon:
+    if: (github.event_name == 'schedule' && github.event.schedule == '55 7 * * 1-5') || (github.event_name == 'workflow_dispatch' && github.event.inputs.session == 'afternoon')
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python nifty_alert.py
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          HC_URL: ${{ secrets.HC_URL }}
+          WINDOW_START: "13:30"
           WINDOW_END: "15:30"
           RUN_UNTIL: "15:33"
       - name: Notify on failure
@@ -77,4 +110,4 @@ jobs:
         run: |
           curl -s "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
             -d chat_id="${TG_CHAT_ID}" \
-            -d text="⚠️ Afternoon job fail ho gaya. GitHub Actions tab check karo, chart khud dekho."
+            -d text="⚠️ Afternoon job fail ho gaya. Chart khud dekho."
