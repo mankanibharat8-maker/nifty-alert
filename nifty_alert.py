@@ -27,6 +27,9 @@ W_END     = hm(os.environ.get("WINDOW_END", "15:30"))
 RUN_UNTIL = hm(os.environ.get("RUN_UNTIL", "15:33"))
 HB_MIN    = 30   # alive message kitne minute me ek baar
 
+CATCHUP_MIN = 45   # start hote hi pichhle kitne minute ke miss signal bhejne hain
+LIVE_MIN    = 10   # chalte waqt signal kitne minute tak "fresh" maana jaye
+
 # ---- SIGNAL SETTINGS ----
 CALL_ST_LEN, CALL_ST_MULT = 20, 2.0    # CALL ke liye SuperTrend (20, 2)
 PUT_ST_LEN,  PUT_ST_MULT  = 10, 1.5    # PUT ke liye SuperTrend (10, 1.5)
@@ -37,11 +40,18 @@ STATE = {1: "IN CALL", -1: "IN PUT", 0: "Flat (koi position nahi)"}
 
 
 def tg(msg):
-    try:
-        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                      data={"chat_id": CHAT_ID, "text": msg}, timeout=10)
-    except Exception as e:
-        print("Telegram error:", e)
+    """Telegram message bhejta hai, fail ho to 3 baar retry. True/False return karta hai."""
+    for attempt in range(3):
+        try:
+            resp = requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+                                 data={"chat_id": CHAT_ID, "text": msg}, timeout=10)
+            if resp.status_code == 200:
+                return True
+            print("Telegram status:", resp.status_code, resp.text, flush=True)
+        except Exception as e:
+            print("Telegram error:", e, flush=True)
+        time.sleep(3)
+    return False
 
 
 def rma(s, n):
@@ -107,7 +117,7 @@ def compute(c):
     dev = BB_MULT * c.Close.rolling(BB_LEN).std(ddof=0)
     c["BBU"], c["BBL"] = basis + dev, basis - dev
 
-    pos, last_event, last_ts = 0, None, None
+    pos, events, last_ts = 0, [], None
     for ts, r in c.iterrows():
         callAll = r.Close > r.ST_CALL and r.RSI > CALL_RSI and r.Close > r.BBU and r.Close > r.R1
         putAll  = r.Close < r.ST_PUT  and r.RSI < PUT_RSI  and r.Close < r.BBL and r.Close < r.S1
@@ -121,17 +131,19 @@ def compute(c):
         elif pos == -1 and r.Close > r.ST_PUT:
             pos, ev = 0, "🟠 PUT EXIT"
         if ev:
-            last_event = (ts, ev, r)
+            events.append((ts, ev, r))
         last_ts = ts
-    event_now = last_event if (last_event and last_event[0] == last_ts) else None
-    return event_now, c.iloc[-1], pos, last_ts
+    return events, c.iloc[-1], pos, last_ts
 
 
 if os.environ.get("TEST") == "1":
-    tg("✅ Test: GitHub Actions se Telegram alert chal raha hai")
+    ok = tg("✅ Test: GitHub Actions se Telegram alert chal raha hai")
+    print("Telegram test result:", ok)
     sys.exit()
 
-sent_ts, errors, last_hb, stale_warned, last_ping = None, 0, None, False, None
+sent, errors, last_hb, stale_warned, last_ping = set(), 0, None, False, None
+first_scan = True
+
 tg(f"🟢 Bot chalu ho gaya ({datetime.now(IST):%H:%M} IST)\n"
    f"Monitoring: {W_START:%H:%M} se {W_END:%H:%M}\n"
    f"Har {HB_MIN} min me 💓 Alive message aayega.")
@@ -148,7 +160,7 @@ while True:
 
     if now.weekday() < 5 and dtime(9, 15) <= now.time() <= dtime(15, 35):
         try:
-            ev, r, pos, last_ts = compute(get_data())
+            ev_list, r, pos, last_ts = compute(get_data())
             errors = 0
 
             # data purana to nahi?
@@ -161,17 +173,26 @@ while True:
             else:
                 stale_warned = False
 
-                # CALL / PUT / EXIT alert
-                if ev:
-                    ts, name, rr = ev
+                # CALL / PUT / EXIT alerts (miss hue signals bhi pakadta hai)
+                for ts, name, rr in ev_list:
+                    if ts in sent:
+                        continue
                     end = ts + pd.Timedelta(minutes=3)
-                    fresh = (now - end) <= pd.Timedelta(minutes=5)
-                    in_window = W_START < end.time() <= W_END
-                    if fresh and in_window and ts != sent_ts:
+                    ev_age = now - end
+                    if first_scan:
+                        ok = (ev_age <= pd.Timedelta(minutes=CATCHUP_MIN)
+                              and dtime(9, 15) < end.time() <= dtime(15, 30))
+                        tag = "⏪ Catch-up (pehle aa chuka ho to ignore karo)\n"
+                    else:
+                        ok = (ev_age <= pd.Timedelta(minutes=LIVE_MIN)
+                              and W_START < end.time() <= W_END)
+                        tag = ""
+                    if ok:
                         st_val = rr.ST_CALL if "CALL" in name else rr.ST_PUT
-                        tg(f"{name}\nNifty: {rr.Close:.2f}\nRSI: {rr.RSI:.1f}\n"
-                           f"SuperTrend: {st_val:.2f}\nCandle: {ts:%H:%M}")
-                        sent_ts = ts
+                        if tg(f"{tag}{name}\nNifty: {rr.Close:.2f}\nRSI: {rr.RSI:.1f}\n"
+                              f"SuperTrend: {st_val:.2f}\nCandle: {ts:%H:%M}"):
+                            sent.add(ts)
+                first_scan = False
 
                 # 💓 alive message
                 if W_START <= now.time() <= W_END and (
@@ -194,4 +215,4 @@ while True:
 if W_END >= dtime(15, 30):
     tg("🔴 Market close. Aaj ka session khatam, bot band ho raha hai.")
 else:
-    tg("🔴 Morning session khatam. Afternoon job ab sambhal lega.")
+    tg(f"⏸️ {W_START:%H:%M}-{W_END:%H:%M} wala session khatam. Agla job ab sambhal lega.")
